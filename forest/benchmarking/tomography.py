@@ -156,12 +156,18 @@ def linear_inv_state_estimate(results: List[ExperimentResult],
     :return: A point estimate of the quantum state rho.
     """
     measurement_matrix = np.vstack([
-        vec(pauli2matrix(result.setting.out_operator, qubits=qubits)).T.conj()
-        for result in results
+        vec(pauli2matrix(result.setting.out_operator, qubits)).T.conj() for result in results
     ])
     expectations = np.array([result.expectation for result in results])
     rho = pinv(measurement_matrix) @ expectations
     return unvec(rho)
+
+
+# TODO: remove. we don't need to take an inverse since we are using a pauli basis. I think this is
+#  equivalent to the above
+def no_inverse(results, qubits):
+    return sum(result.expectation * pauli2matrix(result.setting.out_operator, qubits)
+               for result in results) / 2 ** len(qubits)
 
 
 def iterative_mle_state_estimate(results: List[ExperimentResult], qubits: List[int], epsilon=.1,
@@ -392,7 +398,8 @@ def project_density_matrix(rho) -> np.ndarray:
 
 
 def _resample_expectations_with_beta(results, prior_counts=1):
-    """Resample expectation values by constructing a beta distribution and sampling from it.
+    """
+    Resample expectation values by constructing a beta distribution and sampling from it.
 
     Used by :py:func:`estimate_variance`.
 
@@ -471,6 +478,42 @@ def estimate_variance(results: List[ExperimentResult],
 # ==================================================================================================
 # PROCESS tomography: estimation methods and helper functions
 # ==================================================================================================
+
+
+def linear_inv_process_estimate(results: List[ExperimentResult], qubits: List[int]) -> np.ndarray:
+    """
+    Estimate a quantum process using linear inversion.
+
+    This is the simplest process tomography post processing. To use this function,
+    collect process tomography data with :py:func:`generate_process_tomography_experiment`
+    and :py:func:`~pyquil.operator_estimation.measure_observables`.
+
+    For more details on this post-processing technique,
+    see https://en.wikipedia.org/wiki/Quantum_tomography#Linear_inversion or
+    see section 3.5 of
+
+    [WOOD] Initialization and characterization of open quantum systems
+           C. Wood,
+           PhD thesis from University of Waterloo, (2015).
+           http://hdl.handle.net/10012/9557
+
+    :param results: A tomographically complete list of results.
+    :param qubits: All qubits that were tomographized. This specifies the order in
+        which qubits will be kron'ed together.
+    :return: A point estimate of the quantum state rho.
+    """
+    #TODO: why need to reverse?
+    qs = qubits[::-1]
+    measurement_matrix = np.vstack([
+        vec(np.kron(state2matrix(result.setting.in_state, qs).conj(),
+                    pauli2matrix(result.setting.out_operator, qs))).conj().T
+        for result in results
+    ])
+    expectations = np.array([result.expectation for result in results])
+    rho = pinv(measurement_matrix) @ expectations
+    dim = 2 ** len(qubits)
+    return unvec(rho) + np.eye(dim**2) / dim
+
 
 def _extract_from_results(results: List[ExperimentResult], qubits: List[int]):
     """
